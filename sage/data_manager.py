@@ -3,6 +3,7 @@
 import logging
 import os
 from abc import abstractmethod
+from fnmatch import fnmatch
 from functools import cached_property
 from typing import Any, Dict, Generator, Tuple
 
@@ -124,12 +125,13 @@ class GitHubRepoManager(DataManager):
         # Comment that will be ignored, or
         ext:.my-extension, or
         file:my-file.py, or
-        dir:my-directory
+        dir:my-directory, or
+        content:my-content
         """
         with open(file_path, "r") as f:
             lines = f.readlines()
 
-        parsed_data = {"ext": [], "file": [], "dir": []}
+        parsed_data = {"ext": [], "file": [], "dir": [], "content": []}
         for line in lines:
             if line.startswith("#"):
                 # This is a comment line.
@@ -141,6 +143,12 @@ class GitHubRepoManager(DataManager):
                 logging.error("Unrecognized key in line: %s. Skipping.", line)
 
         return parsed_data
+
+    def _contains_content(self, file_path: str, content: str) -> bool:
+        """Checks whether a file contains a specific content."""
+        with open(file_path, "r") as f:
+            file_content = f.read()
+        return content in file_content
 
     def _should_include(self, file_path: str) -> bool:
         """Checks whether the file should be indexed."""
@@ -155,7 +163,7 @@ class GitHubRepoManager(DataManager):
         if not self.inclusions and not self.exclusions:
             return True
 
-        # Filter based on file extensions, file names and directory names.
+        # Filter based on file extensions, file names, directory names and file content.
         _, extension = os.path.splitext(file_path)
         extension = extension.lower()
         file_name = os.path.basename(file_path)
@@ -165,13 +173,17 @@ class GitHubRepoManager(DataManager):
             return (
                 extension in self.inclusions.get("ext", [])
                 or file_name in self.inclusions.get("file", [])
+                or any(fnmatch(file_name, pattern) for pattern in self.inclusions.get("file", []) if '*' in pattern)
                 or any(d in dirs for d in self.inclusions.get("dir", []))
+                or any(self._contains_content(file_path, content) for content in self.inclusions.get("content", []))
             )
         elif self.exclusions:
             return (
                 extension not in self.exclusions.get("ext", [])
                 and file_name not in self.exclusions.get("file", [])
+                and not any(fnmatch(file_name, pattern) for pattern in self.exclusions.get("file", []) if '*' in pattern)
                 and all(d not in dirs for d in self.exclusions.get("dir", []))
+                and not any(self._contains_content(file_path, content) for content in self.exclusions.get("content", []))
             )
         return True
 
